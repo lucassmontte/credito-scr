@@ -1,0 +1,14 @@
+# dbt
+dbt_credito_scr/target/
+dbt_credito_scr/dbt_packages/
+dbt_credito_scr/logs/
+dbt_credito_scr/.user.yml
+dbt_credito_scr/profiles.yml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# GCP
+*.json

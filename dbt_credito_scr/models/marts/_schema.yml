@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: dim_credit_modality
+    columns:
+      - name: modality_id
+        tests: [unique, not_null]
+
+  - name: dim_client
+    columns:
+      - name: client_id
+        tests: [unique, not_null]
+
+  - name: dim_economic_activity
+    columns:
+      - name: economic_activity_id
+        tests: [unique, not_null]
+
+  - name: fact_credit_operation
+    columns:
+      - name: modality_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_credit_modality')
+                field: modality_id
+      - name: client_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_client')
+                field: client_id
+      - name: active_portfolio
+        tests:
+          - not_null
+          # active_portfolio cannot be negative
+          - dbt_utils.accepted_range:
+              min_value: 0

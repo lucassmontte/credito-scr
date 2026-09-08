@@ -1,0 +1,17 @@
+# Este arquivo NÃO vai dentro da pasta do projeto dbt.
+# Copia o conteúdo abaixo para ~/.dbt/profiles.yml (crie a pasta se não existir).
+# Usa o método oauth porque o Cloud Shell já está autenticado via gcloud —
+# não precisa de chave de service account.
+
+credito_scr:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: credito-scr
+      dataset: marts
+      location: southamerica-east1
+      threads: 4
+      job_execution_timeout_seconds: 300
+      job_retries: 1

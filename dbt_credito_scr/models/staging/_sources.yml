@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: raw_scr
+    database: credito-scr
+    schema: staging
+    tables:
+      - name: scr_data
+        description: >
+          Loaded by the Apache Beam / managed Dataflow pipeline (outside dbt).
+          Column names match the Bacen SCR.data source schema exactly
+          (Portuguese) — this is the bronze layer, deliberately kept
+          faithful to the source of record. Translation to English happens
+          starting at the staging model below.
+        config:
+          loaded_at_field: data_base
+  - name: raw_selic
+    database: credito-scr
+    schema: marts
+    tables:
+      - name: dim_taxa_selic
+        description: >
+          Loaded by fetch_selic.py (Bacen SGS API), outside dbt.
