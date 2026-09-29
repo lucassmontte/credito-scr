@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: ew_segment_month
+    description: Segment × month aggregation feeding the early warning model.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [month_start, state, credit_modality, client_type, client_size]
+    columns:
+      - name: active_portfolio
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+  - name: ew_features
+    description: >
+      Features (months <= t) and target (month t + H) for the portfolio-level
+      early warning model. target_deterioration is NULL where t + H is not yet
+      published — those rows are the current scoring population.
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [segment_id, reference_month]
+    columns:
+      - name: segment_id
+        tests: [not_null]
+      - name: default_rate
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+      - name: target_deterioration
+        tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+                quote: false

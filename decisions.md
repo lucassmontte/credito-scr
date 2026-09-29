@@ -327,3 +327,26 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 ## Day 5 — automation fully verified end-to-end
 
 `gcloud run jobs executions list` confirms `dbt-run-job-8t9rv` (created 2026-09-08 17:51:06 UTC, immediately after triggering the scheduler) was run by the service account (`641184529196-compute@developer.gserviceaccount.com`), not by the human user — proof the Cloud Scheduler → Cloud Run Job path works autonomously, distinct from the two prior manual executions run by `monte.lucas@gmail.com`. Both automation legs (monthly ingestion via Cloud Function, dbt refresh via Cloud Run Job) are now deployed, scheduled, and confirmed working end-to-end, not just designed. Sprint's core engineering scope is complete; remaining work is presentation (dashboard polish, GitHub publication, README).
+
+## Early warning module — portfolio-level behavior model
+
+**Question:** can this project support credit modeling (application or behavior scoring), not just engineering?
+**Answer:** behavior, at portfolio/segment level — yes. Application (concessão) scoring — no.
+**Rationale:** SCR.data is aggregated (state × segment × client type × activity × size × modality × origin × indexer). There is no individual borrower, no application-time snapshot, no borrower-level outcome. An application scorecard needs all three. Forcing one onto this data would be a mislabeled model, and that is the first thing a credit team would catch. What the data *does* support honestly is the portfolio-monitoring question risk teams actually ask every month: *which segments are going to deteriorate?* That is a legitimate behavior/early-warning use case (portfolio monitoring, segment risk appetite, provisioning), and it is what this module builds.
+
+**Design:**
+- **Grain:** segment = state × credit modality × client type × client size, monthly. Economic activity left out of the grain on purpose — it multiplies segments by ~30 and leaves most of them too small for a stable default rate.
+- **Target:** `target_deterioration = 1` if the segment's default rate at t + 6 months rises by ≥ 0.5 p.p. **and** ≥ 15% relative to month t. The two conditions together keep noise in low-rate segments (e.g. mortgage, ~1%) from counting as deterioration. Thresholds are dbt vars, not hardcoded.
+- **Features (months ≤ t only):** current default rate, early delinquency rate (15–90 days overdue ÷ active portfolio — the roll-rate signal that precedes 90+ default), 3- and 6-month changes, 6-month portfolio growth, average balance per operation, portfolio size, Selic level and 6-month change.
+- **Minimum segment size:** R$ 10 mi active portfolio — smaller segments produce default rates dominated by a handful of operations.
+- **Validation:** out-of-time. Test = last 6 labeled months; train = only months whose target window closes before the first test month (no overlap between a training target and the test period). Random splits would leak future macro conditions into training.
+- **Models:** logistic regression baseline first, gradient boosting second; the one with the higher KS is kept. Metrics reported: ROC AUC, Gini, KS, PR-AUC, decile table with lift.
+
+**Upstream change, stated plainly:** two columns already present in bronze since Day 2 (`vencido_de_15_ate_90_dias`, `vencido_acima_de_90_dias`) were exposed through `stg_scr_data` and `fact_credit_operation`. Additive columns only — no existing column, join, or test changed, and the row-count check still applies. The two new models live in `models/early_warning/`, plumbed in via `ref()`, same additive pattern as the Selic change.
+
+**Known limitations:**
+- Consecutive months of the same segment are autocorrelated, so the effective sample size is smaller than the row count suggests; metrics should be read as indicative, not as a production-grade validation.
+- ~43 months of history (2023-01 to 2026-07) covers one Selic cycle, not a full credit cycle — the model has never seen a downturn like 2015–2016 or 2020.
+- Scoring (`scripts/train_early_warning.py`) is run manually for now; the feature table refreshes monthly with the existing Cloud Run dbt job once the image is rebuilt, but training/scoring is not scheduled.
+
+**How I'd know this was wrong:** the base rate of `target_deterioration` comes out below ~3% or above ~40% (thresholds need recalibrating), or the gradient boosting beats the baseline by a wide margin on training but not out-of-time (overfitting to segment identity).

@@ -37,4 +37,5 @@ models:
           - not_null
           # active_portfolio cannot be negative
           - dbt_utils.accepted_range:
-              min_value: 0
+              arguments:
+                min_value: 0

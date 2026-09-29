@@ -16,6 +16,8 @@ select
     s.number_of_operations,
     s.outstanding_balance,
     s.overdue_balance,
+    s.overdue_15_to_90_balance,
+    s.overdue_over_90_balance,
     s.active_portfolio,
     s.default_portfolio,
     s.problem_assets,

@@ -19,6 +19,8 @@ select
     numero_de_operacoes        as number_of_operations,
     carteira_a_vencer        as outstanding_balance,
     carteira_vencida          as overdue_balance,
+    vencido_de_15_ate_90_dias   as overdue_15_to_90_balance,   -- early delinquency (early warning signal)
+    vencido_acima_de_90_dias    as overdue_over_90_balance,
     carteira_ativa            as active_portfolio,
     carteira_inadimplencia      as default_portfolio,
     ativo_problematico          as problem_assets

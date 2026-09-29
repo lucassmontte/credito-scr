@@ -59,6 +59,43 @@ This isn't a polished-from-the-start build — it's a real sprint, and [`decisio
 - **A scope decision made under real business pressure** — BigQuery Sandbox vs. paid billing, decided with a budget cap, not by default.
 - **Selic as the comparison axis, added mid-sprint without touching the pipeline** — the original scope was credit delinquency by sector; relating it to the Selic rate came later, as a scope change requested mid-build, not planned from day one. Because the transformation layer was already in dbt by the time this came up, adding it meant: one new `source()` block pointing at a small externally-loaded table (`fetch_selic.py` → `dim_taxa_selic`), one new `dim_selic_rate` model to translate it into the project's naming convention, and a `left join` added to the reporting marts that needed it. Nothing upstream — the ingestion pipeline, the fact table, the existing dimensions — was touched or re-run. The same pattern repeated when sector-level and state-level cuts were added, and again when the two were combined into `rpt_credit_by_state_sector_month`: each was a new model plumbed in via `ref()`, not a rewrite of what already worked. That's the practical case for dbt on a project like this — not "it's what the job listing asked for," but that a mid-sprint scope change stayed a small, additive diff instead of a risk to everything already tested and passing.
 
+## Early warning: segment-level credit deterioration model
+
+On top of the star schema, a behavior-style model flags **which credit segments are likely to deteriorate in the next 6 months** — the portfolio-monitoring question credit risk teams review monthly.
+
+**What it is, and what it isn't:** SCR.data is aggregated, with no individual borrower, so this is a **portfolio/segment-level** model, not a borrower-level application or behavior score. Full reasoning in [`decisions.md`](decisions.md).
+
+```
+fact_credit_operation ─┐
+dim_credit_modality ───┼─► ew_segment_month ─► ew_features ─► train_early_warning.py ─► marts.ew_segment_scores
+dim_client ────────────┘   (segment × month)   (features ≤ t,     (OOT validation,          (latest month,
+dim_selic_rate ───────────────────────────────►  target at t+6)    logistic vs. GBM)          risk band per segment)
+```
+
+- **Segment:** state × credit modality × client type × client size, ≥ R$ 10 mi active portfolio.
+- **Target:** default rate at t + 6 rises ≥ 0.5 p.p. and ≥ 15% vs. month t.
+- **Key signal:** early delinquency (15–90 days overdue), which rolls into 90+ default.
+- **Validation:** out-of-time, no overlap between training targets and the test window; KS, Gini, ROC AUC, PR-AUC and decile lift.
+
+**Results (out-of-time):**
+
+| Model | ROC AUC | Gini | KS | PR-AUC |
+|---|---|---|---|---|
+| Logistic regression (baseline) | 0.5615 | 0.1230 | 0.0861 | 0.3535 |
+| Gradient boosting | 0.7216 | 0.4432 | 0.3301 | 0.4853 |
+
+Top decile: 55.5% of segments deteriorated vs. a 28.8% base rate (1.9x lift); bottom decile 2.3%. Early delinquency (15-90 days overdue) is by far the strongest feature. Selic adds nothing to ranking: it has the same value for every segment in a given month, so it shifts the level of default, not which segment deteriorates.
+
+Full output, decile table and feature importance: `reports/early_warning_metrics.md`.
+
+Run it:
+
+```
+cd dbt_credito_scr && dbt run --select +ew_features && dbt test --select early_warning
+cd .. && pip install -r scripts/requirements-ml.txt
+python scripts/train_early_warning.py
+```
+
 ## Running it
 
 Ingestion:
