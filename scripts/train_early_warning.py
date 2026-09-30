@@ -34,6 +34,9 @@ from sklearn.preprocessing import StandardScaler
 PROJECT = "credito-scr"
 FEATURES_TABLE = f"{PROJECT}.marts.ew_features"
 SCORES_TABLE = f"{PROJECT}.marts.ew_segment_scores"
+SCORES_HISTORY_TABLE = f"{PROJECT}.marts.ew_segment_scores_history"
+DECILES_TABLE = f"{PROJECT}.marts.ew_model_deciles"
+METRICS_TABLE = f"{PROJECT}.marts.ew_model_metrics"
 TARGET = "target_deterioration"
 FEATURES = [
     "default_rate",
@@ -160,14 +163,49 @@ def main():
     print(out.head(10)[["segment_id", "default_rate", "early_delinquency_rate", "score", "risk_band"]]
           .to_string(index=False))
 
+    # Tabelas de performance do modelo, para o dashboard (Looker Studio)
+    run_date = pd.Timestamp.now(tz="UTC")
+    deciles_out = deciles.reset_index()
+    deciles_out["decil"] = deciles_out["decil"].astype(int)
+    deciles_out["base_rate"] = test[TARGET].mean()
+    deciles_out["model"] = best
+    deciles_out["model_version"] = MODEL_VERSION
+    deciles_out["run_date"] = run_date
+
+    metrics_out = res.reset_index().rename(columns={
+        "index": "model", "ROC AUC": "roc_auc", "Gini": "gini", "KS": "ks", "PR-AUC": "pr_auc"})
+    metrics_out["is_selected"] = metrics_out["model"] == best
+    metrics_out["base_rate_train"] = train[TARGET].mean()
+    metrics_out["base_rate_test"] = test[TARGET].mean()
+    metrics_out["train_start"] = train["reference_month"].min().date()
+    metrics_out["train_end"] = limit.date()
+    metrics_out["test_start"] = test_start.date()
+    metrics_out["test_end"] = test["reference_month"].max().date()
+    metrics_out["horizon_months"] = args.horizon
+    metrics_out["model_version"] = MODEL_VERSION
+    metrics_out["run_date"] = run_date
+
     if not args.no_write:
         from google.cloud import bigquery
+        from google.api_core.exceptions import NotFound
         client = bigquery.Client(project=PROJECT)
-        job = client.load_table_from_dataframe(
-            out, SCORES_TABLE,
-            job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE"))
-        job.result()
-        print(f"Scores gravados em {SCORES_TABLE}")
+
+        def write_table(df_, table, disposition):
+            client.load_table_from_dataframe(
+                df_, table, job_config=bigquery.LoadJobConfig(write_disposition=disposition)).result()
+            print(f"Gravado: {table} ({len(df_):,} linhas)")
+
+        write_table(out, SCORES_TABLE, "WRITE_TRUNCATE")          # mês atual
+        write_table(deciles_out, DECILES_TABLE, "WRITE_TRUNCATE")  # última validação
+        write_table(metrics_out, METRICS_TABLE, "WRITE_TRUNCATE")
+
+        # Histórico de scores: 1 foto por mês. Rodar de novo no mesmo mês substitui a foto.
+        try:
+            client.query(f"DELETE FROM `{SCORES_HISTORY_TABLE}` "
+                         f"WHERE reference_month = '{latest:%Y-%m-%d}'").result()
+        except NotFound:
+            pass
+        write_table(out, SCORES_HISTORY_TABLE, "WRITE_APPEND")
 
     os.makedirs("reports", exist_ok=True)
     with open("reports/early_warning_metrics.md", "w") as f:
