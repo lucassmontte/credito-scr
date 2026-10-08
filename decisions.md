@@ -371,3 +371,15 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 
 **Known gap:** the two views were created in the BigQuery console, not as dbt models. They are versioned in `sql/looker_views.sql`, but nothing tests them or rebuilds them in the monthly job. Moving them into dbt is the next cleanup.
 
+
+## dbt run → dbt build on the scheduled job
+
+**Context:** the Cloud Run Job's Dockerfile ran `dbt run` as its entrypoint. That builds every model but doesn't test any of them.
+
+**Problem:** the 12 dbt tests only ever ran when I typed `dbt test` by hand in Cloud Shell. On the actual monthly schedule, Cloud Scheduler triggers the Cloud Run Job, which only ran `dbt run` — so if a future month's data broke a `not_null` or `relationships` test, nothing would catch it. Bad rows would flow straight into the marts and onto the Looker Studio dashboard with no alert.
+
+**Decision:** changed the Dockerfile entrypoint from `dbt run` to `dbt build`. `dbt build` runs each model and its tests together, in dependency order, and stops on a failure instead of continuing past it.
+
+**Rationale:** this is exactly the case `dbt build` exists for — an unattended, scheduled job with nobody watching the output. `dbt run` on its own is fine for manual, supervised work where I'd run `dbt test` right after anyway; it's the wrong choice for something Cloud Scheduler fires once a month with no human in the loop.
+
+**How I'd know this was wrong:** the job starts failing on a false positive (a real schema drift that `dbt build` correctly blocks but that doesn't actually matter for the marts) often enough that it becomes noise instead of a signal — would mean some test is too strict for this job and needs a specific `--select` scope, not a full revert to `dbt run`.

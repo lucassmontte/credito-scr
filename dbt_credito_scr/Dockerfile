@@ -10,4 +10,4 @@ RUN dbt deps --profiles-dir /dbt
 
 ENV DBT_PROFILES_DIR=/dbt
 
-ENTRYPOINT ["dbt", "run", "--profiles-dir", "/dbt"]
+ENTRYPOINT ["dbt", "build", "--profiles-dir", "/dbt"]

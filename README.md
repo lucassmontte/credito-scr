@@ -24,7 +24,7 @@ Looker Studio dashboard (default rate × Selic, by sector and by state)
 
 Orchestration (both deployed and scheduled, not just designed):
 - **Cloud Function** (`scr-data-monthly-ingest`) — checks monthly for a newly published competencia, uploads it idempotently, submits a scoped Dataflow job.
-- **Cloud Run Job** (`dbt-run-job`) — runs `dbt run` against BigQuery, containerized, triggered by Cloud Scheduler ~4h after ingestion.
+- **Cloud Run Job** (`dbt-run-job`) — runs `dbt build` against BigQuery (models + tests together, fails fast on a bad run), containerized, triggered by Cloud Scheduler ~4h after ingestion.
 
 ## Stack and why
 
@@ -35,7 +35,7 @@ Orchestration (both deployed and scheduled, not just designed):
 | dbt | staging → star schema transformation, with native tests | Formalizes what started as raw SQL into version-controlled, tested models — `not_null`, `unique`, `relationships` on every foreign key |
 | Docker + Cloud Build | Packages the dbt project into a reproducible image | Cloud Run Jobs only run containers; the Dockerfile documents the exact runtime, no "works on my machine" |
 | Cloud Functions (2nd gen) | Monthly ingestion trigger | Lightweight, reacts to a schedule without a standing server; 2nd gen runs on Cloud Run underneath, so it tolerates a dependency as heavy as `apache-beam[gcp]` |
-| Cloud Run Jobs | Scheduled `dbt run` | Built for batch, start-to-finish tasks — the right shape for dbt, unlike a Function meant for short requests |
+| Cloud Run Jobs | Scheduled `dbt build` | Built for batch, start-to-finish tasks — the right shape for dbt, unlike a Function meant for short requests |
 | Cloud Scheduler | Cron triggers for both automation legs | Deliberately not Cloud Composer — an always-on orchestrator isn't worth its cost for two monthly triggers |
 | Looker Studio | Dashboard | Honest substitute for Looker/LookML (no license in this sandbox) — documented as a conscious trade-off, not represented as equivalent |
 | Bacen SGS API | Selic target rate, monthly | Official, free, no scraping needed |
@@ -57,6 +57,7 @@ This isn't a polished-from-the-start build — it's a real sprint, and [`decisio
 - **Zone exhaustion, three times** — `ZONE_RESOURCE_POOL_EXHAUSTED` recurring across days, resolved by escalating through zone, machine type, and eventually confirming the fix actually took effect (it initially didn't — a hardcoded `region=` kwarg in the pipeline code was silently overriding the `--region` flag).
 - **A join that looked right but wasn't tested for volume** — DirectRunner passed a 5-row sample cleanly, then crashed outright on the full 3.6 GB dataset, which is exactly DirectRunner's real boundary, not a failure of the design.
 - **A scope decision made under real business pressure** — BigQuery Sandbox vs. paid billing, decided with a budget cap, not by default.
+- **`dbt run` quietly skipping the tests, on the one job that actually needed them** — the Cloud Run Job's Dockerfile ran `dbt run`, which builds every model but runs no tests. That was fine while I was testing by hand in Cloud Shell, but on the real monthly schedule nobody was watching, so a broken test would never have stopped bad data from reaching the dashboard. Switched the entrypoint to `dbt build`, which runs each model's tests right after building it and stops on a failure — the right default for a job nobody supervises. Full reasoning in [`decisions.md`](./decisions.md).
 - **Selic as the comparison axis, added mid-sprint without touching the pipeline** — the original scope was credit delinquency by sector; relating it to the Selic rate came later, as a scope change requested mid-build, not planned from day one. Because the transformation layer was already in dbt by the time this came up, adding it meant: one new `source()` block pointing at a small externally-loaded table (`fetch_selic.py` → `dim_taxa_selic`), one new `dim_selic_rate` model to translate it into the project's naming convention, and a `left join` added to the reporting marts that needed it. Nothing upstream — the ingestion pipeline, the fact table, the existing dimensions — was touched or re-run. The same pattern repeated when sector-level and state-level cuts were added, and again when the two were combined into `rpt_credit_by_state_sector_month`: each was a new model plumbed in via `ref()`, not a rewrite of what already worked. That's the practical case for dbt on a project like this — not "it's what the job listing asked for," but that a mid-sprint scope change stayed a small, additive diff instead of a risk to everything already tested and passing.
 
 ## Early warning: segment-level credit deterioration model
@@ -91,7 +92,7 @@ Full output, decile table and feature importance: `reports/early_warning_metrics
 Run it:
 
 ```
-cd dbt_credito_scr && dbt run --select +ew_features && dbt test --select early_warning
+cd dbt_credito_scr && dbt build --select +ew_features
 cd .. && pip install -r scripts/requirements-ml.txt
 python scripts/train_early_warning.py
 ```
@@ -127,8 +128,7 @@ Transformation:
 ```bash
 cd dbt_credito_scr
 dbt deps
-dbt run
-dbt test
+dbt build
 ```
 
 See `decisions.md` for full context on every flag and design choice above.
