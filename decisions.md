@@ -350,3 +350,24 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 - Scoring (`scripts/train_early_warning.py`) is run manually for now; the feature table refreshes monthly with the existing Cloud Run dbt job once the image is rebuilt, but training/scoring is not scheduled.
 
 **How I'd know this was wrong:** the base rate of `target_deterioration` comes out below ~3% or above ~40% (thresholds need recalibrating), or the gradient boosting beats the baseline by a wide margin on training but not out-of-time (overfitting to segment identity).
+
+## Dashboard: Looker Studio, page 1
+
+**Question:** what goes on the dashboard, and how much of the model does it show?
+**My answer:** one page built for a monthly risk review: key metrics, a map by state, breakdowns by client type and product, a delinquency trend by risk band and a ranked watchlist of every scored segment.
+**Rationale:** the post that announced the model promised the flagged segments "on a map and a monthly watchlist that a risk analyst can open without writing SQL." Page 1 delivers that and nothing beyond it.
+
+**Question:** how to present the dashboard in English when the source labels are in Portuguese?
+**My answer:** a BigQuery view (`ew_segment_scores_en`) that translates product, client type, client size and risk band, keeping the same column names. Looker Studio points at the view, so no chart had to be rebuilt.
+**Alternatives considered:** calculated fields in Looker Studio (one CASE per field, repeated in every data source); translating inside the Python scoring script (mixes presentation into the model output).
+**Rationale:** one place to maintain, versioned in `sql/looker_views.sql`, and the model tables stay untouched.
+
+**Question:** the dashboard should show the forecast. Should the trend lines be extended into the next 6 months?
+**My answer:** no. The model predicts which segments will deteriorate within 6 months; it does not predict monthly delinquency values. Drawing future values would display something the model never produced. The trend chart shows history only, and the "next 6 months" wording sits on the watchlist, which is where the prediction lives.
+**Consequence:** a monthly forecast needs a separate time-series model (BigQuery ML ARIMA_PLUS is the obvious candidate). Logged as a later step, not part of this release.
+
+**Question:** why did clicking a month on the trend chart empty every other chart?
+**My answer:** cross-filtering. The trend chart covers 37 months; every other chart reads only the latest month. A click on any month other than Jul 2026 filtered the rest of the page down to zero rows, and a click on a Medium or Low point also filtered out the High-only donut. Cross-filtering is off on the trend chart and stays on for the donut and bar chart, where filtering the map and watchlist by product or client type is useful.
+
+**Known gap:** the two views were created in the BigQuery console, not as dbt models. They are versioned in `sql/looker_views.sql`, but nothing tests them or rebuilds them in the monthly job. Moving them into dbt is the next cleanup.
+

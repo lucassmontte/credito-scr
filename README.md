@@ -96,6 +96,24 @@ cd .. && pip install -r scripts/requirements-ml.txt
 python scripts/train_early_warning.py
 ```
 
+## Dashboard
+
+**Live report:** [Credit Risk Radar on Looker Studio](https://datastudio.google.com/reporting/4b52f307-8544-4474-93cf-360eacd17ceb)
+
+![Credit Risk Radar, page 1](docs/dashboard_page1.png)
+
+One page for the monthly risk review, reading the scores of the latest reference month (Jul 2026):
+
+- **Key metrics:** high-risk segments, share of the portfolio they hold, and its size in R$.
+- **Map:** share of each state's portfolio in high-risk segments.
+- **Breakdowns:** high-risk portfolio by client type and by product.
+- **Trend:** early delinquency (15-90 days) of each current risk band since Jul 2023, weighted by portfolio. The High band starts pulling away from Medium and Low in 2025.
+- **Watchlist:** all 2,295 scored segments, ranked by risk score, filterable by product, client type, client size and risk band.
+
+Data comes from two BigQuery views kept in [`sql/looker_views.sql`](sql/looker_views.sql): one translates the Central Bank labels to English, the other aggregates the trend by risk band.
+
+What the dashboard does not show: monthly forecast values. The model ranks segments by the risk of deteriorating within the next 6 months; it does not predict monthly delinquency rates, so no line is projected past the last real month.
+
 ## Running it
 
 Ingestion:
