@@ -394,3 +394,12 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 **Rationale:** 30/45 lines up with what's already documented above about Bacen's publication lag (roughly 30-45 days) and the job firing around day 20 of each month. Chaining with `&&` instead of a non-blocking check follows the same logic as the dbt run → dbt build change: this is an unattended monthly job, so a real problem should stop it, not get silently absorbed.
 
 **Known risk, flagged on purpose:** 45 days is close to the upper end of the normal publication lag already documented. If Bacen publishes just a few days later than usual in some month, this could trip `error_after` on a non-problem and block that month's build entirely. If that happens more than once, it's a signal the threshold is too tight for real-world variance, not that the pipeline is broken — widen `error_after` rather than removing the check.
+
+
+## Freshness bug: DATE vs TIMESTAMP on loaded_at_field
+
+**Problem:** the first deploy of the freshness check failed immediately with `Database Error in source scr_data: Expected a timestamp value when querying field 'last_modified' of table None but received value of type 'date' instead`. Not a staleness error — a type error. `data_base` is a BigQuery `DATE` column, and dbt's freshness query assumes `loaded_at_field` resolves to a `TIMESTAMP`.
+
+**Fix:** changed `loaded_at_field` from the bare column name `data_base` to the expression `"TIMESTAMP(data_base)"`, which dbt accepts and substitutes directly into the freshness query. BigQuery's `TIMESTAMP()` casts the date to midnight UTC on that day, which is all freshness needs for day-level thresholds.
+
+**Note on my own process here:** my first guess at the cause was wrong — I'd assumed `data_base` being a competencia (business period), not a load timestamp, meant freshness would always read as stale by design, since Bacen's own publication lag already eats 30-45 days before data exists to load. That's a real, separate concern and still worth watching once this runs cleanly: if the still-open 2026 backfill (see the earlier backlog entry — `ZONE_RESOURCE_POOL_EXHAUSTED`, never confirmed resolved) means the newest loaded competencia really is more than 45 days behind today, freshness should now correctly report an error for that reason — a true positive, not a bug. Worth checking which case it is on the next run before touching the thresholds again.

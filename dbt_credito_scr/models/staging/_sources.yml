@@ -13,7 +13,7 @@ sources:
           faithful to the source of record. Translation to English happens
           starting at the staging model below.
         config:
-          loaded_at_field: data_base
+          loaded_at_field: "TIMESTAMP(data_base)"
           freshness:
             warn_after: {count: 30, period: day}
             error_after: {count: 45, period: day}
