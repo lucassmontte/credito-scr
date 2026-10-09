@@ -10,4 +10,4 @@ RUN dbt deps --profiles-dir /dbt
 
 ENV DBT_PROFILES_DIR=/dbt
 
-ENTRYPOINT ["dbt", "build", "--profiles-dir", "/dbt"]
+ENTRYPOINT ["sh", "-c", "dbt source freshness --profiles-dir /dbt && dbt build --profiles-dir /dbt"]

@@ -383,3 +383,14 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 **Rationale:** this is exactly the case `dbt build` exists for — an unattended, scheduled job with nobody watching the output. `dbt run` on its own is fine for manual, supervised work where I'd run `dbt test` right after anyway; it's the wrong choice for something Cloud Scheduler fires once a month with no human in the loop.
 
 **How I'd know this was wrong:** the job starts failing on a false positive (a real schema drift that `dbt build` correctly blocks but that doesn't actually matter for the marts) often enough that it becomes noise instead of a signal — would mean some test is too strict for this job and needs a specific `--select` scope, not a full revert to `dbt run`.
+
+
+## Source freshness on scr_data
+
+**Context:** dbt build tests the quality of whatever data is already loaded, but it has no way to notice if new data stopped arriving at all. The ingestion pipeline (Cloud Function → Dataflow) runs outside dbt entirely, so a silent failure there — Bacen changing its publish pattern, the Cloud Function breaking, anything upstream — would leave dbt build happily passing every test against increasingly stale data every month.
+
+**Decision:** added a `freshness` block to the `scr_data` source, on top of the `loaded_at_field: data_base` that was already there: `warn_after` 30 days, `error_after` 45 days. Wired it into the Cloud Run Job's entrypoint ahead of the build: `dbt source freshness && dbt build`. If freshness errors out, the chain stops there — no build runs, no marts refresh on top of data that may just be old because ingestion broke.
+
+**Rationale:** 30/45 lines up with what's already documented above about Bacen's publication lag (roughly 30-45 days) and the job firing around day 20 of each month. Chaining with `&&` instead of a non-blocking check follows the same logic as the dbt run → dbt build change: this is an unattended monthly job, so a real problem should stop it, not get silently absorbed.
+
+**Known risk, flagged on purpose:** 45 days is close to the upper end of the normal publication lag already documented. If Bacen publishes just a few days later than usual in some month, this could trip `error_after` on a non-problem and block that month's build entirely. If that happens more than once, it's a signal the threshold is too tight for real-world variance, not that the pipeline is broken — widen `error_after` rather than removing the check.
