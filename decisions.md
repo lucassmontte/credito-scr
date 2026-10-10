@@ -403,3 +403,19 @@ Remaining: create the second Cloud Scheduler job (`dbt-run-trigger`) to fire thi
 **Fix:** changed `loaded_at_field` from the bare column name `data_base` to the expression `"TIMESTAMP(data_base)"`, which dbt accepts and substitutes directly into the freshness query. BigQuery's `TIMESTAMP()` casts the date to midnight UTC on that day, which is all freshness needs for day-level thresholds.
 
 **Note on my own process here:** my first guess at the cause was wrong — I'd assumed `data_base` being a competencia (business period), not a load timestamp, meant freshness would always read as stale by design, since Bacen's own publication lag already eats 30-45 days before data exists to load. That's a real, separate concern and still worth watching once this runs cleanly: if the still-open 2026 backfill (see the earlier backlog entry — `ZONE_RESOURCE_POOL_EXHAUSTED`, never confirmed resolved) means the newest loaded competencia really is more than 45 days behind today, freshness should now correctly report an error for that reason — a true positive, not a bug. Worth checking which case it is on the next run before touching the thresholds again.
+
+
+## Freshness ERROR STALE investigated — automation confirmed working, thresholds were just too tight
+
+**Problem:** after fixing the TIMESTAMP cast, the job failed again with `ERROR STALE` — a real freshness breach this time, not a bug. `MAX(data_base)` in BigQuery was `2026-07-31`, 71 days before the run date.
+
+**Investigation, not a guess this time.** Before touching any number again, checked whether the actual automated ingestion (`scr-data-monthly-ingest` Cloud Function, triggered by the `scr-data-monthly-trigger` Scheduler job, both `ENABLED`/`ACTIVE`) was really working:
+- `gcloud scheduler jobs describe scr-data-monthly-trigger` showed `lastAttemptTime: 2026-09-20` (already ran) and `scheduleTime: 2026-10-20` (the *next* run — hadn't happened yet as of this investigation).
+- `gcloud functions logs read` came back empty — a red herring, not a real signal: this is a 2nd-gen function, and that command doesn't reach 2nd-gen logs. The real logs live under Cloud Run (`gcloud logging read 'resource.type="cloud_run_revision" ...'`).
+- The real log for the 2026-09-20 run shows the function downloading the actual Bacen ZIP, finding `scrdata_202605.csv`, `scrdata_202606.csv`, `scrdata_202607.csv` (May-July) but not `scrdata_202608.csv` (August), and exiting cleanly with "Not published yet" - exactly the idempotent, non-error behavior designed back in Day 4.
+
+**Conclusion:** the pipeline is not broken. It checked, correctly found August not yet published, and is waiting for its next scheduled check (Oct 20) to try again. The actual observed Bacen lag (July's competencia, ending Jul 31, wasn't in the ZIP until on/around Sep 20 - about 51 days) is longer than the "30-45 days" originally assumed, and a monthly check cadence means a late publication can require two check cycles to catch, not one. Worst-case normal staleness for this specific design is closer to 80-90 days than 45.
+
+**Fix:** widened the freshness thresholds from `warn_after: 30 / error_after: 45` to `warn_after: 60 / error_after: 90`, based on this observed cadence rather than the original unverified assumption.
+
+**Note on process:** I initially cited Bacen's own open-data metadata page ("dados disponibilizados apos 30 dias") as a faster, more authoritative-sounding number than the project's own 30-45 day assumption - and that was the wrong call. The metadata page describes an intended SLA; the actual Cloud Function log, against the real file, is ground truth and should have been checked first. Lesson for next time: when a log is available, trust it over a webpage description of how the system is supposed to behave.

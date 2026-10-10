@@ -15,8 +15,8 @@ sources:
         config:
           loaded_at_field: "TIMESTAMP(data_base)"
           freshness:
-            warn_after: {count: 30, period: day}
-            error_after: {count: 45, period: day}
+            warn_after: {count: 60, period: day}
+            error_after: {count: 90, period: day}
   - name: raw_selic
     database: credito-scr
     schema: marts
